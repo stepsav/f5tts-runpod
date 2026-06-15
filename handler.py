@@ -27,7 +27,10 @@ import soundfile as sf
 import torch
 
 F5_REPO = os.environ.get("F5_REPO", "Misha24-10/F5-TTS_RUSSIAN")
-F5_MODEL_NAME = os.environ.get("F5_MODEL_NAME", "F5TTS_Base")
+F5_MODEL_NAME = os.environ.get("F5_MODEL_NAME", "F5TTS_v1_Base")
+# accent_tune — дообучен с полной разметкой ударений (нужны '+' в тексте → RUAccent)
+F5_CKPT_REL = os.environ.get("F5_CKPT_REL", "F5TTS_v1_Base_accent_tune/model_last_inference.safetensors")
+F5_VOCAB_REL = os.environ.get("F5_VOCAB_REL", "F5TTS_v1_Base/vocab.txt")
 MODEL_DIR = os.environ.get("F5_MODEL_DIR", "/models/f5ru")
 REFS_DIR = os.environ.get("F5_REFS_DIR", "/refs")
 
@@ -45,19 +48,16 @@ RU_VOWELS = "аеёиоуыэюяАЕЁИОУЫЭЮЯ"
 
 
 def _ensure_model():
-    """Скачать русский файнтюн, если не зашит/не скачан. Возвращает (ckpt_path, vocab_path)."""
-    if not os.path.isdir(MODEL_DIR) or not os.listdir(MODEL_DIR):
+    """Скачать ТОЛЬКО нужный чекпойнт + vocab (репо огромный). Возвращает (ckpt_path, vocab_path)."""
+    ckpt = os.path.join(MODEL_DIR, F5_CKPT_REL)
+    vocab = os.path.join(MODEL_DIR, F5_VOCAB_REL)
+    if not (os.path.exists(ckpt) and os.path.exists(vocab)):
         from huggingface_hub import snapshot_download
-        print(f"[f5] downloading {F5_REPO} -> {MODEL_DIR}", flush=True)
-        snapshot_download(repo_id=F5_REPO, local_dir=MODEL_DIR)
-    ckpts = (glob.glob(os.path.join(MODEL_DIR, "**", "*.safetensors"), recursive=True)
-             + glob.glob(os.path.join(MODEL_DIR, "**", "*.pt"), recursive=True))
-    if not ckpts:
-        raise RuntimeError(f"no checkpoint (.safetensors/.pt) in {MODEL_DIR}")
-    # предпочитаем 'last'/самый большой
-    ckpt = max(ckpts, key=lambda p: (("last" in p.lower()) * 10_000_000_000 + os.path.getsize(p)))
-    vocabs = glob.glob(os.path.join(MODEL_DIR, "**", "vocab.txt"), recursive=True)
-    vocab = vocabs[0] if vocabs else ""
+        print(f"[f5] downloading {F5_REPO}: {F5_CKPT_REL} + {F5_VOCAB_REL}", flush=True)
+        snapshot_download(repo_id=F5_REPO, local_dir=MODEL_DIR,
+                          allow_patterns=[F5_CKPT_REL, F5_VOCAB_REL])
+    if not os.path.exists(ckpt):
+        raise RuntimeError(f"checkpoint not found: {ckpt}")
     print(f"[f5] ckpt={ckpt}\n[f5] vocab={vocab}", flush=True)
     return ckpt, vocab
 
@@ -100,7 +100,7 @@ def handler(event):
     speaker = (inp.get("speaker") or "male").lower()
     if speaker not in REFS:
         speaker = "male"
-    if inp.get("accentize", False):
+    if inp.get("accentize", True):  # accent_tune ждёт '+' перед ударными
         text = _accentize(text)
     ref_file, ref_text = REFS[speaker]
 
